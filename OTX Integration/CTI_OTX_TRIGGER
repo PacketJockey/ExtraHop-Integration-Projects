@@ -1,0 +1,136 @@
+if(event == "EXTERNAL_DATA") {
+    var body = ExternalData.body;
+    var type = ExternalData.type;
+    let ioc = body.field;
+    let descr = "Source: " + type + "\n" + body.Description;
+    let opts = { expire: 3600, priority: Session.PRIORITY_LOW, notify: false};  
+    Session.replace(ioc,descr);
+    log(ioc + " " + descr + " Hass Been Added!!!")
+}
+
+if(event == "HTTP_REQUEST") {
+    let host = HTTP.host;
+    let ioc = Session.lookup(host)
+    if(ioc) {
+        var cip = Flow.client.ipaddr;
+        var sip = Flow.server.ipaddr;
+        var eventTitle ='HTTP Request Matching Acute Threat Intel: ' + HTTP.uri;
+        var descr = ioc.toString();
+        var eventDetect ='HTTPATI';  
+        var idVar = HTTP.uri;    
+        log("HTTP MATCH! " + HTTP.uri + " " + ioc);
+        detect();
+        tagDev();
+    } 
+}
+
+if(event == "DNS_REQUEST") {
+    let ioc = Session.lookup(DNS.qname);
+    if(ioc) {
+        var cip = Flow.client.ipaddr;
+        var sip = Flow.server.ipaddr;
+        var eventTitle ='DNS Request Matching Actute Threat Intel: ' + DNS.qname;
+        var descr = ioc.toString();
+        var eventDetect ='DNSATI';
+        var idVar = DNS.qname;
+        detect();
+        tagDev()
+        log("DNS Lookup of Real-Time Threat Intelligence Match Domain Lookup: " + DNS.qname + " Reason: " + ioc)
+    }
+}
+
+if(event == "SSL_OPEN") {
+    if(!SSL.certificate) {return;}
+    let ioc = Session.lookup(SSL.certificate.fingerprint)
+    if(ioc) {
+        var cip = Flow.client.ipaddr;
+        var sip = Flow.server.ipaddr;
+        var eventTitle ='SSL Fingerprint Matching Actute Threat Intel: ' + SSL.host + " " + SSL.certificate.fingerprint;
+        var descr = ioc.toString();
+        var eventDetect ='SSLATI';
+        var idVar = SSL.host;
+        detect();
+        tagDev()
+        log("DNS Lookup of Real-Time Threat Intelligence Match Domain Lookup: " + SSL.host + " Reason:Fingerprint - " + ioc)
+    }
+}
+
+if(event == "FLOW_CLASSIFY") {
+    var cip = Flow.client.ipaddr;
+    var sip = Flow.server.ipaddr;
+    let ioc = Session.lookup(sip.toString())
+        if(ioc) {
+            var eventTitle ='IP Address Matching Acute Threat Intel: ' + sip;
+            var descr = ioc.toString();
+            var eventDetect ='FlowATI';
+            detect();
+            tagDev();
+            log("Flow with Real-Time Threat Intelligence Match:" + sip);
+    }
+}
+
+ function tagDev() {
+    Remote.HTTP('extrahop').get(
+        {
+            'path': '/api/v1/devices?limit=100&search_type=discovery_id&value=' + Flow.client.device.id, 
+            enableResponseEvent: true 
+        } )
+ }
+
+//Commit Detection
+function detect() {
+let title = eventTitle;
+let description = descr;
+let detectName = eventDetect;
+let score = 90
+    commitDetection(detectName, {
+        categories: ['sec.action'],
+        title: title +  " From Client: " + cip,
+        participants: [
+            { role: 'offender', object: Flow.server.ipaddr },
+            { role: 'victim', object: Flow.client.ipaddr }
+        ],
+        description: descr,
+        identityKey: [cip ,
+                    sip,
+                    idVar
+                    ].join('!!'),
+        riskScore: score
+    })
+};
+
+if(event == "REMOTE_RESPONSE") {
+    //#######################################################################
+    //# Create a device group called 'Suspect Devices' or something similar #
+    //# then put the device group id value into the 'devGroup variable      #
+    //#######################################################################
+
+    var devGroup = 14
+    var body = Remote.response.body.toString();
+    let id = /"id":(.*?),/.exec(body);
+    let devId = parseInt(id[1])
+    let tag = {
+        'assign': [ devId ],
+        'unassign': [0]
+    };
+    payload = JSON.stringify(tag);
+    log("Payload: " + payload)
+           
+        Remote.HTTP('extrahop').post({'path':'/api/v1/devicegroups/'+devGroup+'/devices', 'headers': {'accept': 'application/json'}, 'payload': payload});
+        log("LOG: Tagged: "  + id[1]) 
+
+}
+
+function capture() {
+    //If you want PPCAP of activity, uncomment line 31
+                    var name = "ATI - " + event + '-->' +
+                    Flow.client.ipaddr + "->" +
+                    Flow.server.ipaddr + "-";
+
+                    var opts = { 
+                        maxPackets : 20000,
+                        maxPacketsLookback : 180
+                    }
+
+                    Flow.captureStart( name, opts );
+}
